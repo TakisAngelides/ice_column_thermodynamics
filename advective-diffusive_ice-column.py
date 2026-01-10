@@ -2578,7 +2578,7 @@ if numerical == True:
                 # Vertical advection at the surface.
                 w_0_bar = 1.0e-4
                 # Linear dependency from w_0 to 0 at the base.
-                w_bar = w_0_bar * xi
+                w_bar = w_0_bar * xi 
                 beta_L = 0.0
                 strain = 0.0
                 G_k   = -0.1

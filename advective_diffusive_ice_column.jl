@@ -5,32 +5,32 @@ using BenchmarkTools
 # Physics constants
 # =========================
 const Pe = 5.0
-const γ = -0.35
+const γ = 0.35
 const β = 0.5
-const Ω = 0.0
-const initial_θ = 0.5
+const Ω = 0.0 # -1.0
+const initial_θ = 1.0 # 1.0 or 1.05
 
 # =========================
 # Numerical parameters
 # =========================
 const n = 100
-const Δτ = 0.00001
-const tsteps = 100000
-const plot_every = 200
+const Δτ = 1e-5
+const tsteps = 100_000
 const spacing = "even"
 
 # =========================
-# Plot switches
+# Plotting
 # =========================
 const plot_heatmap = false
 const plot_lines = true
-const n_lines = 10 # number of line snapshots
+const n_lines = 10 # total number of line snapshots to plot
+const save_every = 1000 # save every n time steps
 
 # =========================
 # Grid
 # =========================
 const ξ = LinRange(0, 1, n)
-const ω = Pe .* ξ
+const ω = - Pe .* ξ
 
 function setup_grid(spacing; spacing_order=2.0, spacing_factor=2.0)
     spacing == "even" && return ξ
@@ -58,7 +58,7 @@ function time_evolution()
     # Storage
     # =========================
     if plot_heatmap || plot_lines
-        nt_plot = Int(floor(tsteps / plot_every)) + 1
+        nt_plot = Int(floor(tsteps / save_every)) + 1
         Θ = zeros(n, nt_plot)
         time = zeros(nt_plot)
 
@@ -109,39 +109,39 @@ function time_evolution()
             # Integration in time for inner spatial loop avoiding 2 boundary points from each end
             # =======================
             for i in 3:n-2
-
+                # diffusion = 2.0 * (h_1 * θ_before[i+1] - (h_2 + h_1) * θ_before[i] + h_2 * θ_before[i-1]) / (h_2 * h_1 * (h_2 + h_1)) # 3 point stencil test
                 diffusion = a_1[i]*θ_before[i-2] + a_2[i]*θ_before[i-1] + a_3[i]*θ_before[i] + a_4[i]*θ_before[i+1] + a_5[i]*θ_before[i+2]
                 advection = ω[i] * (θ_before[i+1] - θ_before[i-1]) / (h[i] + h[i-1]) 
                 θ_now[i] = θ_before[i] + Δτ*(diffusion - advection + Ω)
-
             end
 
             # ========================
             # Integrate in time points near the boundary that require a 3-point stencil
             # =======================
             for i in (2, n-1)
-                h_2 = h[i-1]
-                h_3 = h[i]
-                diffusion = 2*(h_2*θ_before[i+1] - (h_3+h_2)*θ_before[i] + h_3*θ_before[i-1]) / (h_3*h_2*(h_3+h_2))
-                advection = ω[i] * (θ_before[i+1] - θ_before[i-1]) / (h_3 + h_2)
+                h_1 = h[i-1]
+                h_2 = h[i]
+                diffusion = 2*(h_1*θ_before[i+1] - (h_2+h_1)*θ_before[i] + h_2*θ_before[i-1]) / (h_2*h_1*(h_2+h_1))
+                advection = ω[i] * (θ_before[i+1] - θ_before[i-1]) / (h_2 + h_1)
                 θ_now[i] = θ_before[i] + Δτ*(diffusion - advection + Ω)
             end
 
             # ========================
             # Integrate base boundary point - 3 point forward first derivative
             # =======================
+            # θ_now[1] = θ_now[2] + γ*h[1] # forward first derivative
             θ_now[1] = (γ - b_2*θ_now[2] - b_3*θ_now[3]) / b_1 # 3 point forward first derivative
 
             # ========================
             # Integrate surface boundary point - backward first derivative
             # =======================
-            θ_now[end] = (β*θ_now[end-1] + 1.0) / (1.0 + β / h[end])
+            θ_now[end] = (1.0 + β*θ_now[end-1]/h[end]) / (1.0 + β/h[end]) # backward first derivative
 
             # ========================
             # Store results for plotting
             # =======================
             if plot_heatmap || plot_lines
-                if mod(t, plot_every) == 0
+                if mod(t, save_every) == 0
                     Θ[:, counter] .= θ_now
                     time[counter] = t * Δτ
                     counter += 1
@@ -173,7 +173,8 @@ function time_evolution()
         p2 = plot(xlabel = "Temperature", ylabel = "Depth (ζ)", legend = false)
         for (k, j) in enumerate(idx)
             gray = 0.85 * (1 - (k-1)/(n_lines-1))
-            plot!(p2, Θ[:, j], ζ, color = RGB(gray, gray, gray), lw = 1.5)
+            plot!(p2, @.(223.15*Θ[:, j]-273.15), ζ, color = RGB(gray, gray, gray), lw = 1.5)
+            # plot!(p2, @.(248.15*Θ[:, j]-273.15), ζ, color = RGB(gray, gray, gray), lw = 1.5)
         end
         display(p2)
     end
