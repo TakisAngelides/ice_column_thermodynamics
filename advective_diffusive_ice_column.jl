@@ -7,14 +7,14 @@ Pe = 5.0
 γ = 0.35
 β = 0.5
 Ω = 0.0
-initial_θ = 0.5
+initial_θ = 1.0
 
 # =========================
 # Numerical parameters
 # =========================
 n = 100
-Δτ = 0.00001
-tsteps = 100000
+Δτ = 1e-5
+tsteps = 100_000
 plot_every = 20
 spacing = "even"
 
@@ -34,7 +34,7 @@ n_lines = 10 # number of line snapshots
 # Grid
 # =========================
 ξ = LinRange(0, 1, n)
-ω = Pe .* ξ
+ω = - Pe .* ξ
 
 function setup_grid(spacing; spacing_order=2.0, spacing_factor=2.0)
     spacing == "even" && return ξ
@@ -102,17 +102,17 @@ function time_evolution()
                         (h_3 + h_2)
 
         θ_now[3:end-2] = @. θ_before[3:end-2] +
-                            Δτ*(diffusion + advection + Ω)
+                            Δτ*(diffusion - advection + Ω)
 
         θ_now[2] = θ_before[2] + Δτ*(
             2*(h_2[1]*θ_before[3] - (h_3[1]+h_2[1])*θ_before[2] + h_3[1]*θ_before[1]) /
-            (h_3[1]*h_2[1]*(h_3[1]+h_2[1])) +
+            (h_3[1]*h_2[1]*(h_3[1]+h_2[1])) -
             ω[2]*(θ_before[3]-θ_before[2])/(h_3[1]+h_2[1]) + Ω
         )
 
         θ_now[end-1] = θ_before[end-1] + Δτ*(
             2*(h_2[end]*θ_before[end] - (h_3[end]+h_2[end])*θ_before[end-1] + h_3[end]*θ_before[end-2]) /
-            (h_3[end]*h_2[end]*(h_3[end]+h_2[end])) +
+            (h_3[end]*h_2[end]*(h_3[end]+h_2[end])) -
             ω[end-1]*(θ_before[end]-θ_before[end-2])/(h_3[end]+h_2[end]) + Ω
         )
 
@@ -157,7 +157,7 @@ function time_evolution()
             gray = 0.85 * (1 - (k-1)/(n_lines-1))
             plot!(
                 p2,
-                Θ[:, j],
+                @.(223.15*Θ[:, j]-273.15),
                 ζ,
                 color = RGB(gray, gray, gray),
                 lw = 1.5
