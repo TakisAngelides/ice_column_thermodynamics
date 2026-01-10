@@ -8,7 +8,8 @@ const Pe = 5.0
 const γ = 0.35
 const β = 0.5
 const Ω = 0.0 # -1.0
-const initial_θ = 1.0 # 1.0 or 1.05
+const initial_θ = 1.0 # 1.0, 1.05
+const T_air = 223.15 # 223.15, 248.15
 
 # =========================
 # Numerical parameters
@@ -30,7 +31,7 @@ const save_every = 1000 # save every n time steps
 # Grid
 # =========================
 const ξ = LinRange(0, 1, n)
-const ω = - Pe .* ξ
+const ω = - Pe .* ξ # the minus sign implies ice is advecting heat downward because positive ξ points upwards and the ice is moving downward
 
 function setup_grid(spacing; spacing_order=2.0, spacing_factor=2.0)
     spacing == "even" && return ξ
@@ -109,7 +110,6 @@ function time_evolution()
             # Integration in time for inner spatial loop avoiding 2 boundary points from each end
             # =======================
             for i in 3:n-2
-                # diffusion = 2.0 * (h_1 * θ_before[i+1] - (h_2 + h_1) * θ_before[i] + h_2 * θ_before[i-1]) / (h_2 * h_1 * (h_2 + h_1)) # 3 point stencil test
                 diffusion = a_1[i]*θ_before[i-2] + a_2[i]*θ_before[i-1] + a_3[i]*θ_before[i] + a_4[i]*θ_before[i+1] + a_5[i]*θ_before[i+2]
                 advection = ω[i] * (θ_before[i+1] - θ_before[i-1]) / (h[i] + h[i-1]) 
                 θ_now[i] = θ_before[i] + Δτ*(diffusion - advection + Ω)
@@ -129,13 +129,12 @@ function time_evolution()
             # ========================
             # Integrate base boundary point - 3 point forward first derivative
             # =======================
-            # θ_now[1] = θ_now[2] + γ*h[1] # forward first derivative
             θ_now[1] = (γ - b_2*θ_now[2] - b_3*θ_now[3]) / b_1 # 3 point forward first derivative
 
             # ========================
             # Integrate surface boundary point - backward first derivative
             # =======================
-            θ_now[end] = (1.0 + β*θ_now[end-1]/h[end]) / (1.0 + β/h[end]) # backward first derivative
+            θ_now[end] = (h[end] + β*θ_now[end-1]) / (h[end] + β) # backward first derivative
 
             # ========================
             # Store results for plotting
@@ -173,8 +172,7 @@ function time_evolution()
         p2 = plot(xlabel = "Temperature", ylabel = "Depth (ζ)", legend = false)
         for (k, j) in enumerate(idx)
             gray = 0.85 * (1 - (k-1)/(n_lines-1))
-            plot!(p2, @.(223.15*Θ[:, j]-273.15), ζ, color = RGB(gray, gray, gray), lw = 1.5)
-            # plot!(p2, @.(248.15*Θ[:, j]-273.15), ζ, color = RGB(gray, gray, gray), lw = 1.5)
+            plot!(p2, @.(T_air*Θ[:, j]-273.15), ζ, color = RGB(gray, gray, gray), lw = 1.5)
         end
         display(p2)
     end
