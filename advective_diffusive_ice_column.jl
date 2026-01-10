@@ -31,7 +31,7 @@ const save_every = 1000 # save every n time steps
 # Grid
 # =========================
 const ξ = LinRange(0, 1, n)
-const ω = - Pe .* ξ # the minus sign implies ice is advecting heat downward because positive ξ points upwards and the ice is moving downward
+const ω = - Pe .* ξ # the minus sign implies ice is advecting heat downward because positive ξ points upwards and the ice is moving downward (ω₀ < 0)
 
 function setup_grid(spacing; spacing_order=2.0, spacing_factor=2.0)
     spacing == "even" && return ξ
