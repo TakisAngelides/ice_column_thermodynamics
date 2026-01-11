@@ -1,5 +1,6 @@
 using Plots
 using BenchmarkTools
+using BenchmarkTools
 
 # =========================
 # Physics constants
@@ -18,8 +19,13 @@ const n = 100
 const Δτ = 1e-5
 const tsteps = 100_000
 const spacing = "even"
+const n = 100
+const Δτ = 1e-5
+const tsteps = 100_000
+const spacing = "even"
 
 # =========================
+# Plotting
 # Plotting
 # =========================
 const plot_heatmap_flag = false
@@ -30,6 +36,8 @@ const save_every = 1000 # save every n time steps
 # =========================
 # Grid
 # =========================
+const ξ = LinRange(0, 1, n)
+const ω = - Pe .* ξ # the minus sign implies ice is advecting heat downward because positive ξ points upwards and the ice is moving downward (ω₀ < 0)
 const ξ = LinRange(0, 1, n)
 const ω = - Pe .* ξ # the minus sign implies ice is advecting heat downward because positive ξ points upwards and the ice is moving downward (ω₀ < 0)
 
@@ -213,6 +221,10 @@ function time_evolution_no_for_loop()
         # Time loop
         # =========================
         for t in 1:tsteps
+        # =========================
+        # Time loop
+        # =========================
+        for t in 1:tsteps
 
             # ========================
             # Integration in time for inner spatial loop avoiding 2 boundary points from each end
@@ -291,6 +303,7 @@ function plot_lines(time, θ; path_to_save = nothing, display_flag = true)
             savefig(p1, path_to_save)
         end
     end
+
 end
 
 if plot_heatmap_flag || plot_lines_flag
