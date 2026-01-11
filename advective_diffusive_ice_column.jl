@@ -23,8 +23,8 @@ const spacing = "even"
 # =========================
 # Plotting
 # =========================
-const plot_heatmap_flag = false
-const plot_lines_flag = false
+const plot_heatmap_flag = true
+const plot_lines_flag = true
 const n_lines = 10 # total number of line snapshots to plot
 const save_every = 1000 # save every n time steps
 
@@ -67,9 +67,9 @@ function time_evolution_for_loop()
     # =========================
     # Storage of states
     # =========================
-    nt_plot = Int(floor(tsteps / save_every)) + 1 # + 1 for initial state
-    θ = zeros(n, nt_plot)
-    time = zeros(nt_plot)
+    num_saved_states = Int(floor(tsteps / save_every)) + 1 # + 1 for initial state
+    θ = zeros(n, num_saved_states)
+    time = zeros(num_saved_states)
     θ[:, 1] .= θ_now
     time[1] = 0.0
     counter = 2
@@ -176,9 +176,9 @@ function time_evolution_no_for_loop()
     # =========================
     # Storage of states
     # =========================
-    nt_plot = Int(floor(tsteps / save_every)) + 1 # + 1 for initial state
-    θ = zeros(n, nt_plot)
-    time = zeros(nt_plot)
+    num_saved_states = Int(floor(tsteps / save_every)) + 1 # + 1 for initial state
+    θ = zeros(n, num_saved_states)
+    time = zeros(num_saved_states)
     θ[:, 1] .= θ_now
     time[1] = 0.0
     counter = 2
@@ -277,11 +277,11 @@ function plot_lines(time, θ; path_to_save = nothing, display_flag = true)
     # =========================
     # Line plots
     # =========================
-    p1 = plot(xlabel = "Temperature (°C)", ylabel = "Depth (ζ)", legend = :bottomright)
-    n_time = length(time)
-    for i in 0:n_lines-1
-        idx = Int(1 + i * (n_time - 1) / (n_lines - 1))
-        plot!(T_air .* θ[:, idx] .- 273.15, ζ, label = "t=$(round(time[idx], digits=3)) s")
+    p1 = plot(xlabel = "Temperature (°C)", ylabel = "Depth (ζ)", legend = false)
+
+    num_saved_states = size(θ, 2)
+    for idx in 1:Int(floor(num_saved_states / n_lines)):num_saved_states
+        plot!(T_air .* θ[:, idx] .- 273.15, ζ, label = "t=$(round(time[idx], digits=3)) s", color = :black, alpha = idx / num_saved_states)
     end
     if display_flag 
         display(p1)
