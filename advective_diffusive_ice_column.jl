@@ -19,13 +19,8 @@ const n = 100
 const Δτ = 1e-5
 const tsteps = 100_000
 const spacing = "even"
-const n = 100
-const Δτ = 1e-5
-const tsteps = 100_000
-const spacing = "even"
 
 # =========================
-# Plotting
 # Plotting
 # =========================
 const plot_heatmap_flag = false
@@ -36,8 +31,6 @@ const save_every = 1000 # save every n time steps
 # =========================
 # Grid
 # =========================
-const ξ = LinRange(0, 1, n)
-const ω = - Pe .* ξ # the minus sign implies ice is advecting heat downward because positive ξ points upwards and the ice is moving downward (ω₀ < 0)
 const ξ = LinRange(0, 1, n)
 const ω = - Pe .* ξ # the minus sign implies ice is advecting heat downward because positive ξ points upwards and the ice is moving downward (ω₀ < 0)
 
