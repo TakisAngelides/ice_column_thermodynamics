@@ -221,10 +221,6 @@ function time_evolution_no_for_loop()
         # Time loop
         # =========================
         for t in 1:tsteps
-        # =========================
-        # Time loop
-        # =========================
-        for t in 1:tsteps
 
             # ========================
             # Integration in time for inner spatial loop avoiding 2 boundary points from each end
@@ -272,15 +268,14 @@ function plot_heatmap(time, θ; path_to_save = nothing, display_flag = true)
     # =========================
     # Heatmap
     # =========================
-    if plot_heatmap_flag
-        p1 = heatmap(time, ζ, @.(T_air*θ-273.15), xlabel = "Time", ylabel = "Depth (ζ)", colorbar_title = "Temperature", colormap = :thermal)
-        if display_flag 
-            display(p1)
-        end
-        if !isnothing(path_to_save)
-            savefig(p1, path_to_save)
-        end
+    p1 = heatmap(time, ζ, @.(T_air*θ-273.15), xlabel = "Time", ylabel = "Depth (ζ)", colorbar_title = "Temperature", colormap = :thermal)
+    if display_flag 
+        display(p1)
     end
+    if !isnothing(path_to_save)
+        savefig(p1, path_to_save)
+    end
+    
 
 end
 
@@ -289,21 +284,19 @@ function plot_lines(time, θ; path_to_save = nothing, display_flag = true)
     # =========================
     # Line plots
     # =========================
-    if plot_lines_flag
-        p1 = plot(xlabel = "Temperature (°C)", ylabel = "Depth (ζ)", legend = :bottomright)
-        n_time = length(time)
-        for i in 0:n_lines-1
-            idx = Int(1 + i * (n_time - 1) / (n_lines - 1))
-            plot!(T_air .* θ[:, idx] .- 273.15, ζ, label = "t=$(round(time[idx], digits=3)) s")
-        end
-        if display_flag 
-            display(p1)
-        end
-        if !isnothing(path_to_save)
-            savefig(p1, path_to_save)
-        end
+    p1 = plot(xlabel = "Temperature (°C)", ylabel = "Depth (ζ)", legend = :bottomright)
+    n_time = length(time)
+    for i in 0:n_lines-1
+        idx = Int(1 + i * (n_time - 1) / (n_lines - 1))
+        plot!(T_air .* θ[:, idx] .- 273.15, ζ, label = "t=$(round(time[idx], digits=3)) s")
     end
-
+    if display_flag 
+        display(p1)
+    end
+    if !isnothing(path_to_save)
+        savefig(p1, path_to_save)
+    end
+    
 end
 
 if plot_heatmap_flag || plot_lines_flag
