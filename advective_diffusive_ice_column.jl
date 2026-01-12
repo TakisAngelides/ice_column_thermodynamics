@@ -1,6 +1,5 @@
 using Plots
 using BenchmarkTools
-using BenchmarkTools
 
 # =========================
 # Physics constants
