@@ -5,7 +5,7 @@ using BenchmarkTools
 # Physics constants
 # =========================
 const Pe = 5.0
-const γ = 0.35
+const γ = -0.35
 const β = 0.5
 const Ω = 0.0 # 0.0, -1.0
 const initial_θ = 1.0 # 1.0, 1.05
@@ -102,9 +102,9 @@ function time_evolution_for_loop()
         h_1 = h[1]
         h_2 = h[2]
         H_1 = h_1 + h_2
-        b_1 = (2.0 * h_1 + h_2) / (h_1 * H_1)
-        b_2 = - H_1 / (h_1 * h_2)
-        b_3 = h_1 / (h_2 * H_1)
+        b_1 = -(2.0 * h_1 + h_2) / (h_1 * H_1)
+        b_2 = H_1 / (h_1 * h_2)
+        b_3 = -h_1 / (h_2 * H_1)
 
         # =========================
         # Time loop
