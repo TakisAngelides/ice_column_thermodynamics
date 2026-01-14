@@ -22,7 +22,7 @@ const spacing = "even"
 # =========================
 # Plotting
 # =========================
-const plot_heatmap_flag = true
+const plot_heatmap_flag = false
 const plot_lines_flag = true
 const n_lines = 10 # total number of line snapshots to plot
 const save_every = 1000 # save every n time steps
@@ -205,9 +205,9 @@ function time_evolution_no_for_loop()
         a_5 = @. (2(h_1+h_2)*h_2 - 2(h_1+2h_2)*h_3) /
                 (H_2*(h_2+h_3+h_4)*(h_3+h_4)*h_4)
 
-        b_1 = @. (2h[1] + h[2]) / (h[1]*(h[1] + h[2]))
-        b_2 = @. -(h[1] + h[2]) / (h[1]*h[2])
-        b_3 = @. h[1] / (h[2]*(h[1] + h[2]))
+        b_1 = @. -(2h[1] + h[2]) / (h[1]*(h[1] + h[2]))
+        b_2 = @. (h[1] + h[2]) / (h[1]*h[2])
+        b_3 = @. -h[1] / (h[2]*(h[1] + h[2]))
 
         # =========================
         # Time loop
@@ -292,7 +292,7 @@ function plot_lines(time, θ; path_to_save = nothing, display_flag = true)
 end
 
 if plot_heatmap_flag || plot_lines_flag
-    time, θ = time_evolution_for_loop()
+    time, θ = time_evolution_no_for_loop()
     if plot_lines_flag
         plot_lines(time, θ)
     end
