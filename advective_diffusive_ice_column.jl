@@ -1,309 +1,240 @@
+using ITensors
+using ITensorMPS
+using QuanticsTCI
+using TensorCrossInterpolation
 using Plots
-using BenchmarkTools
 
-# =========================
-# Physics constants
-# =========================
-const Pe = 5.0
-const γ = 0.35
-const β = 0.5
-const Ω = 0.0 # 0.0, -1.0
-const initial_θ = 1.0 # 1.0, 1.05
-const T_air = 223.15 # 223.15, 248.15
+ITensors.disable_warn_order()
 
-# =========================
-# Numerical parameters
-# =========================
-const n = 100
-const Δτ = 1e-5
-const tsteps = 100_000
-const spacing = "even"
+"""
+    tci(f, x, sites; tol=1e-14, f_type=Float64)
 
-# =========================
-# Plotting
-# =========================
-const plot_heatmap_flag = true
-const plot_lines_flag = true
-const n_lines = 10 # total number of line snapshots to plot
-const save_every = 1000 # save every n time steps
-
-# =========================
-# Grid
-# =========================
-const ξ = LinRange(0, 1, n)
-const ω = - Pe .* ξ # the minus sign implies ice is advecting heat downward because positive ξ points upwards and the ice is moving downward (ω₀ < 0)
-
-function setup_grid(spacing; spacing_order=2.0, spacing_factor=2.0)
-    spacing == "even" && return ξ
-    spacing == "polynomial" && return ξ .^ spacing_order
-    spacing == "exponential" &&
-        return (exp.(spacing_factor .* ξ) .- 1) ./ (exp(spacing_factor) - 1)
-    error("Unknown spacing")
+Construct an MPS using quantics tensor cross interpolation (QTT-TCI) representing the function `f` sampled on the grid `x`.
+"""
+function tci(f::Function, x::AbstractArray{<:Number}, sites::Vector{ITensors.Index{Int64}}; tol::Float64=1e-14, f_type::DataType=Float64)
+    qtt, _, _ = quanticscrossinterpolate(f_type, f, x; tolerance=tol)
+    return MPS(qtt.tci, sites=sites)
 end
 
-const ζ = setup_grid(spacing)
-const h = diff(ζ)
+"""
+    mps_to_list_inefficient(mps, N, n)
 
-# =========================
-# Initial condition for θ
-# =========================
-function compute_initial_θ()
-    θ_before = fill(initial_θ, n)
-    θ_now = fill(initial_θ, n)    
-    return θ_before, θ_now
+Fully contract an MPS and extract all coefficients as a dense vector. Used only for plotting and diagnostics.
+"""
+function mps_to_list_inefficient(mps, N, n)
+    res = Vector{Float64}(undef, n)
+    contracted = ITensorMPS.contract(mps)
+    for i in 0:n-1
+        binary = reverse(digits(i; base=2, pad=N) .+ 1)
+        res[i+1] = contracted[binary...]
+    end
+    return res
 end
 
-# =========================
-# Time evolution
-# =========================
-function time_evolution_for_loop()
+"""
+    get_triple_delta_op_list(sites)
 
-    # =========================
-    # Initialize state
-    # =========================
-    θ_before, θ_now = compute_initial_θ()
+Return a list of rank-3 delta tensors δ(s,s',s'') for converting an MPS into a diagonal MPO.
+"""
+function get_triple_delta_op_list(sites)
+    return [delta(s, s', s'') for s in sites]
+end
 
-    # =========================
-    # Storage of states
-    # =========================
-    num_saved_states = Int(floor(tsteps / save_every)) + 1 # + 1 for initial state
-    θ = zeros(n, num_saved_states)
-    time = zeros(num_saved_states)
-    θ[:, 1] .= θ_now
-    time[1] = 0.0
-    counter = 2
+"""
+    mps_to_mpo(mps, sites)
 
-    @inbounds begin
+Convert a diagonal MPS into an MPO using triple-delta tensors.
+"""
+function mps_to_mpo(mps, sites)
+    mpo = MPO(length(mps))
+    deltas = get_triple_delta_op_list(sites)
+    for i in eachindex(mps)
+        mpo[i] = mps[i] * deltas[i]
+    end
+    setprime!(mpo, 0; :plev => 2)
+    return mpo
+end
 
-        # =========================
-        # 5 point stencil coefficients from Eq 30 of https://www.researchgate.net/publication/229045683_Finite_Difference_Formulae_for_Unequal_Sub-Intervals_Using_Lagrange's_Interpolation_Formula
-        # =========================
-        a_1 = zeros(n)
-        a_2 = zeros(n)
-        a_3 = zeros(n)
-        a_4 = zeros(n)
-        a_5 = zeros(n)
-        for i in 3:n-2
-            h_1 = h[i-2]
-            h_2 = h[i-1]
-            h_3 = h[i]
-            h_4 = h[i+1]
-            H_2 = h_1 + h_2 + h_3 + h_4
-            a_1[i] = (- 2.0 * h_2 * (2.0 * h_3 + h_4) + 2.0 * h_3 * (h_3 + h_4)) / (h_1 * (h_1 + h_2) * (h_1 + h_2 + h_3) * H_2)
-            a_2[i] = (2.0 * (h_1 + h_2) * (2.0 * h_3 + h_4) - 2.0 * h_3 * (h_3 + h_4)) / (h_1 * h_2 * (h_1 + h_3) * (h_2 + h_3 + h_4))
-            a_3[i] = (2.0 * h_2 * (h_1 + h_2) - 2.0 * (h_1 + 2.0 * h_2) * (2.0 * h_3 + h_4) + 2.0 * h_3 * (h_3 + h_4)) / ((h_1 + h_2) * h_2 * h_3 * (h_3 + h_4))
-            a_4[i] = (2.0 * (h_1 + 2.0 * h_2) * (h_3 + h_4) - 2.0 * h_2 * (h_1 + h_2)) / ((h_1 + h_2 + h_3) * (h_2 + h_3) * h_3 * h_4)
-            a_5[i] = (2.0 * (h_1 + h_2) * h_2 - 2.0 * (h_1 + 2.0 * h_2) * h_3) / (H_2 * (h_2 + h_3 + h_4) * (h_3 + h_4) * h_4)
+"""
+    sr1(N; pbc=false)
+
+Construct the right-shift operator as an OpSum.
+"""
+function sr1(N; pbc=false)
+    opsum = OpSum()
+    for n in 1:N
+        tmp = OpSum()
+        tmp += "S+", n
+        for i in n+1:N
+            tmp *= "S-", i
         end
-
-        # =========================
-        # Coefficients for base boundary condition - 3 point forward first derivative
-        # =========================
-        h_1 = h[1]
-        h_2 = h[2]
-        H_1 = h_1 + h_2
-        b_1 = (2.0 * h_1 + h_2) / (h_1 * H_1)
-        b_2 = - H_1 / (h_1 * h_2)
-        b_3 = h_1 / (h_2 * H_1)
-
-        # =========================
-        # Time loop
-        # =========================
-        for t in 1:tsteps
-
-            # ========================
-            # Integration in time for inner spatial loop avoiding 2 boundary points from each end
-            # =======================
-            for i in 3:n-2
-                diffusion = a_1[i]*θ_before[i-2] + a_2[i]*θ_before[i-1] + a_3[i]*θ_before[i] + a_4[i]*θ_before[i+1] + a_5[i]*θ_before[i+2]
-                advection = ω[i] * (θ_before[i+1] - θ_before[i-1]) / (h[i] + h[i-1]) 
-                θ_now[i] = θ_before[i] + Δτ*(diffusion - advection + Ω)
-            end
-
-            # ========================
-            # Integrate in time points near the boundary that require a 3-point stencil
-            # =======================
-            for i in (2, n-1)
-                h_1 = h[i-1]
-                h_2 = h[i]
-                diffusion = 2*(h_1*θ_before[i+1] - (h_2+h_1)*θ_before[i] + h_2*θ_before[i-1]) / (h_2*h_1*(h_2+h_1))
-                advection = ω[i] * (θ_before[i+1] - θ_before[i-1]) / (h_2 + h_1)
-                θ_now[i] = θ_before[i] + Δτ*(diffusion - advection + Ω)
-            end
-
-            # ========================
-            # Integrate base boundary point - 3 point forward first derivative
-            # =======================
-            θ_now[1] = (γ - b_2*θ_now[2] - b_3*θ_now[3]) / b_1 # 3 point forward first derivative
-
-            # ========================
-            # Integrate surface boundary point - backward first derivative
-            # =======================
-            θ_now[end] = (h[end] + β*θ_now[end-1]) / (h[end] + β) # backward first derivative
-
-            # ========================
-            # Store results 
-            # =======================
-            if mod(t, save_every) == 0
-                θ[:, counter] .= θ_now
-                time[counter] = t * Δτ
-                counter += 1
-            end
-            
-            # ========================
-            # Update state for next time step
-            # =======================
-            θ_now, θ_before = θ_before, θ_now
-
-        end
-
+        opsum += tmp
     end
-
-    return time, θ
-
+    return opsum
 end
 
-function time_evolution_no_for_loop()
+"""
+    sl1(N; pbc=false)
 
-    # =========================
-    # Initialize state
-    # =========================
-    θ_before, θ_now = compute_initial_θ()
-    diffusion = similar(θ_before, n-4)
-    advection = similar(θ_before, n-4)
-
-    # =========================
-    # Storage of states
-    # =========================
-    num_saved_states = Int(floor(tsteps / save_every)) + 1 # + 1 for initial state
-    θ = zeros(n, num_saved_states)
-    time = zeros(num_saved_states)
-    θ[:, 1] .= θ_now
-    time[1] = 0.0
-    counter = 2
-
-    @views begin
-
-        # =========================
-        # Coefficients
-        # =========================
-        h_1, h_2, h_3, h_4 = h[1:end-3], h[2:end-2], h[3:end-1], h[4:end]
-        H_2 = @. h_1 + h_2 + h_3 + h_4
-
-        a_1 = @. (-2h_2*(2h_3+h_4) + 2h_3*(h_3+h_4)) /
-                (h_1*(h_1+h_2)*(h_1+h_2+h_3)*H_2)
-
-        a_2 = @. (2(h_1+h_2)*(2h_3+h_4) - 2h_3*(h_3+h_4)) /
-                (h_1*h_2*(h_1+h_3)*(h_2+h_3+h_4))
-
-        a_3 = @. (2h_2*(h_1+h_2) - 2(h_1+2h_2)*(2h_3+h_4) + 2h_3*(h_3+h_4)) /
-                ((h_1+h_2)*h_2*h_3*(h_3+h_4))
-
-        a_4 = @. (2(h_1+2h_2)*(h_3+h_4) - 2h_2*(h_1+h_2)) /
-                ((h_1+h_2+h_3)*(h_2+h_3)*h_3*h_4)
-
-        a_5 = @. (2(h_1+h_2)*h_2 - 2(h_1+2h_2)*h_3) /
-                (H_2*(h_2+h_3+h_4)*(h_3+h_4)*h_4)
-
-        b_1 = @. (2h[1] + h[2]) / (h[1]*(h[1] + h[2]))
-        b_2 = @. -(h[1] + h[2]) / (h[1]*h[2])
-        b_3 = @. h[1] / (h[2]*(h[1] + h[2]))
-
-        # =========================
-        # Time loop
-        # =========================
-        for t in 1:tsteps
-
-            # ========================
-            # Integration in time for inner spatial loop avoiding 2 boundary points from each end
-            # =======================
-            @. diffusion = a_1*θ_before[1:end-4] + a_2*θ_before[2:end-3] + a_3*θ_before[3:end-2] + a_4*θ_before[4:end-1] + a_5*θ_before[5:end]
-            @. advection = ω[3:end-2] * (θ_before[4:end-1] - θ_before[2:end-3]) / (h_3 + h_2)
-            @. θ_now[3:end-2] = θ_before[3:end-2] + Δτ*(diffusion - advection + Ω)
-
-            # ========================
-            # Integrate in time points near the boundary that require a 3-point stencil
-            # =======================
-            for i in (2, n-1)
-                h_1 = h[i-1]
-                h_2 = h[i]
-                θ_now[i] = θ_before[i] + Δτ*(2*(h_1*θ_before[i+1] - (h_2+h_1)*θ_before[i] + h_2*θ_before[i-1]) / (h_2*h_1*(h_2+h_1)) - ω[i]*(θ_before[i+1]-θ_before[i-1])/(h_2 + h_1) + Ω)
-            end
-            
-            # ========================
-            # Integrate base boundary point - 3 point forward first derivative
-            # =======================
-            θ_now[1] = (γ - b_2*θ_now[2] - b_3*θ_now[3]) / b_1
-
-            # ========================
-            # Integrate surface boundary point - backward first derivative
-            # =======================
-            θ_now[end] = (β*θ_now[end-1] + h[end]) / (β + h[end])
-
-            if mod(t, save_every) == 0
-                θ[:, counter] .= θ_now
-                time[counter] = t * Δτ
-                counter += 1
-            end
-
-            θ_before, θ_now = θ_now, θ_before
-
+Construct the left-shift operator as an OpSum.
+"""
+function sl1(N; pbc=false)
+    opsum = OpSum()
+    for n in 1:N
+        tmp = OpSum()
+        tmp += "S-", n
+        for i in n+1:N
+            tmp *= "S+", i
         end
-
+        opsum += tmp
     end
-
-    return time, θ
+    return opsum
 end
 
-function plot_heatmap(time, θ; path_to_save = nothing, display_flag = true)
+"""
+    get_diffusion_mpo(N, sites, Δx_inv)
 
-    # =========================
-    # Heatmap
-    # =========================
-    p1 = heatmap(time, ζ, @.(T_air*θ-273.15), xlabel = "Time", ylabel = "Depth (ζ)", colorbar_title = "Temperature", colormap = :thermal)
-    if display_flag 
-        display(p1)
-    end
-    if !isnothing(path_to_save)
-        savefig(p1, path_to_save)
-    end
+Return the three-point symmetric second-derivative MPO.
+"""
+function get_diffusion_mpo(N, sites, Δx_inv; pbc=false)
+    opsum = OpSum()
+    opsum += -2, "Id", 1
+    opsum += sr1(N; pbc=pbc) + sl1(N; pbc=pbc)
+    return Δx_inv^2 * MPO(opsum, sites)
+end
+
+"""
+    get_two_point_symmetric_first_derivative_mpo(N, sites, Δx_inv)
+
+Return the two-point symmetric first-derivative MPO.
+"""
+function get_two_point_symmetric_first_derivative_mpo(N, sites, Δx_inv; pbc=false)
+    opsum = sr1(N; pbc=pbc) - sl1(N; pbc=pbc)
+    return 0.5 * Δx_inv * MPO(opsum, sites)
+end
+
+"""
+    get_advection_mpo(N, sites, Δx_inv, Pe, n, ξ)
+
+Return the advection MPO.
+"""
+function get_advection_mpo(N, sites, Δx_inv, Pe, n, ξ; cutoff=0.0)
+    d_dx = get_two_point_symmetric_first_derivative_mpo(N, sites, Δx_inv)
+    ω_mps = -Pe * tci(i -> ξ[Int(i)], 1:n, sites)
+    ω_mpo = mps_to_mpo(ω_mps, sites)
+    return apply(ω_mpo, d_dx; cutoff=cutoff)
+end
+
+"""
+    get_time_step_mpo(N, sites, Δx_inv, Pe, n, Ω, Δτ, ξ)
+
+Return the explicit Euler time-step MPO.
+"""
+function get_time_step_mpo(N, sites, Δx_inv, Pe, n, Ω, Δτ, ξ; cutoff=0.0)
+    Id = MPO(sites, "Id")
+    diffusion = Δτ * get_diffusion_mpo(N, sites, Δx_inv)
+    advection = -Δτ * get_advection_mpo(N, sites, Δx_inv, Pe, n, ξ)
+    strain = Δτ * Ω * Id
+    return add(Id, diffusion, advection, strain; cutoff=cutoff)
+end
+
+"""
+    get_desired_boundary_values(mps, mps_2, mps_3, mps_penultimate, Δx, γ, β)
+
+Compute Robin-type boundary values using interior stencil points.
+"""
+function get_desired_boundary_values(mps, mps_2, mps_3, mps_penultimate, Δx, γ, β)
+    val_2 = inner(mps, mps_2)
+    val_3 = inner(mps, mps_3)
+    val_penultimate = inner(mps, mps_penultimate)
+    desired_base = (-2 * Δx * γ + 4 * val_2 - val_3) / 3
+    desired_surface = (Δx + β * val_penultimate) / (Δx + β)
+    return desired_base, desired_surface
+end
+
+"""
+    set_boundary_conditions(mps, desired_base, desired_surface, base_mps, surface_mps)
+
+Impose boundary values by projection onto endpoint basis states.
+"""
+function set_boundary_conditions(mps, desired_base, desired_surface, base_mps, surface_mps; cutoff=0.0)
+    current_base = inner(mps, base_mps)
+    current_surface = inner(mps, surface_mps)
+    return add(mps, (-current_base + desired_base) * base_mps, (-current_surface + desired_surface) * surface_mps; cutoff=cutoff)
+end
+
+"""
+    time_evolution(...)
+
+Evolve the MPS forward in time and plot temperature profiles.
+"""
+function time_evolution(tsteps, mps, time_step_mpo, mps_2, mps_3, mps_penultimate, Δx, γ, β, base_mps, surface_mps, T_air, ξ, N, n, plot_every; cutoff = 0.0)
     
+    p = plot(xlabel="Temperature (°C)", ylabel="Depth (ξ)", legend=false)
+    plot!(T_air .* mps_to_list_inefficient(mps, N, n) .- 273.15, ξ, color = "black", alpha = 1/tsteps)
+    
+    for t in 1:tsteps
+        
+        mps = apply(time_step_mpo, mps; cutoff=cutoff)
+        desired_base, desired_surface = get_desired_boundary_values(mps, mps_2, mps_3, mps_penultimate, Δx, γ, β)
+        mps = set_boundary_conditions(mps, desired_base, desired_surface, base_mps, surface_mps; cutoff=cutoff)
+        
+        if t % plot_every == 0
+            println("\r$t: max χ = $(maximum(linkdims(mps)))")
+            plot!(T_air .* mps_to_list_inefficient(mps, N, n) .- 273.15, ξ, color = "black", alpha = t/tsteps)
+        end
 
+    end
+
+    display(p)
 end
 
-function plot_lines(time, θ; path_to_save = nothing, display_flag = true)
+"""
+    get_initial_mps(initial_θ, n, sites)
 
-    # =========================
-    # Line plots
-    # =========================
-    p1 = plot(xlabel = "Temperature (°C)", ylabel = "Depth (ζ)", legend = false)
+Return a constant initial temperature profile as an MPS.
+"""
+function get_initial_mps(initial_θ, n, sites)
+    return tci(_ -> initial_θ, 1:n, sites)
+end
 
-    num_saved_states = size(θ, 2)
-    for idx in 1:Int(floor(num_saved_states / n_lines)):num_saved_states
-        plot!(T_air .* θ[:, idx] .- 273.15, ζ, label = "t=$(round(time[idx], digits=3)) s", color = :black, alpha = idx / num_saved_states)
-    end
-    if display_flag 
-        display(p1)
-    end
-    if !isnothing(path_to_save)
-        savefig(p1, path_to_save)
-    end
+"""
+    simulate()
+
+Run the full advection–diffusion simulation.
+"""
+function simulate()
+
+    tsteps = 1000
+    plot_every = 100
+    Δτ = 1e-3
+    N = 4
+    n = 2^N
+    ξ = LinRange(0, 1, n)
+    Pe = 5.0
+    Δx = ξ[2] - ξ[1]
+    Δx_inv = inv(Δx)
+    γ = -0.35
+    β = 0.5
+    Ω = 0.0
+    initial_θ = 1.0
+    T_air = 223.15
+    cutoff = 1e-14
+
+    sites = siteinds("S=1/2", N)
+    mps = get_initial_mps(initial_θ, n, sites)
+    time_step_mpo = get_time_step_mpo(N, sites, Δx_inv, Pe, n, Ω, Δτ, ξ)
+    
+    pt(i) = reverse(digits(i - 1; base=2, pad=N) .+ 1)
+    
+    base_mps = productMPS(sites, pt(1))
+    mps_2 = productMPS(sites, pt(2))
+    mps_3 = productMPS(sites, pt(3))
+    mps_penultimate = productMPS(sites, pt(n - 1))
+    surface_mps = productMPS(sites, pt(n))
+    
+    @time time_evolution(tsteps, mps, time_step_mpo, mps_2, mps_3, mps_penultimate, Δx, γ, β, base_mps, surface_mps, T_air, ξ, N, n, plot_every; cutoff = cutoff)
     
 end
 
-if plot_heatmap_flag || plot_lines_flag
-    time, θ = time_evolution_for_loop()
-    if plot_lines_flag
-        plot_lines(time, θ)
-    end
-    if plot_heatmap_flag
-        plot_heatmap(time, θ)
-    end
-else
-    r = @benchmark time_evolution_for_loop() samples = 3 evals = 1
-    println("Benchmark for time_evolution_for_loop():")
-    display(r)
-    r = @benchmark time_evolution_no_for_loop() samples = 3 evals = 1
-    println("Benchmark for time_evolution_no_for_loop():")
-    display(r)
-end
+simulate()
