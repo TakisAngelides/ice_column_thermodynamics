@@ -1,4 +1,4 @@
-USE_GPU = false
+USE_GPU = true
 using Plots
 using BenchmarkTools
 using ParallelStencil
@@ -32,9 +32,17 @@ function setup_grid(spacing, ξ; spacing_order=2.0, spacing_factor=2.0)
     error("Unknown spacing")
 end
 
-@parallel_indices (i) function time_step!(θ_before, θ_now, h, ω, a_1, a_2, a_3, a_4, a_5, n, Δτ, Ω)
+@parallel_indices (i) function time_step_five_point!(θ_before, θ_now, h, ω, a_1, a_2, a_3, a_4, a_5, n, Δτ, Ω)
     if (i >= 3) && (i <= n-2)
         θ_now[i] = θ_before[i] + Δτ*(a_1[i]*θ_before[i-2] + a_2[i]*θ_before[i-1] + a_3[i]*θ_before[i] + a_4[i]*θ_before[i+1] + a_5[i]*θ_before[i+2] 
+                                     - ω[i] * (θ_before[i+1] - θ_before[i-1]) / (h[i] + h[i-1]) + Ω) 
+    end
+    return
+end
+
+@parallel_indices (i) function time_step_three_point!(θ_before, θ_now, h, ω, c_1, c_2, c_3, n, Δτ, Ω)
+    if (i >= 3) && (i <= n-2)
+        θ_now[i] = θ_before[i] + Δτ*(c_1[i]*θ_before[i+1] + c_2[i]*θ_before[i] + c_3[i]*θ_before[i-1] 
                                      - ω[i] * (θ_before[i+1] - θ_before[i-1]) / (h[i] + h[i-1]) + Ω) 
     end
     return
@@ -81,10 +89,10 @@ function time_evolution()
     # =========================
     # Numerical parameters
     # =========================
-    n = 100
+    n = 30
     Δτ = DATAT(1e-5) # Must be DATAT for kernel multiplication
     tsteps = 100_000
-    spacing = "even"
+    spacing = "polynomial"
 
     # =========================
     # Saving states
@@ -97,12 +105,12 @@ function time_evolution()
     # LinRange defaults to Float64 endpoints, so we force DATAT
     ξ = LinRange(DATAT(0), DATAT(1), n) 
     
-    # ω calculation: Ensure literals are cast or allow broadcasting to handle it
-    ω = Data.Array(- Pe .* ξ) 
-    
     # ζ and h setup
     ζ = setup_grid(spacing, ξ)
     h = diff(ζ) # This will inherit Float32 from ζ
+
+    # ω calculation: Ensure literals are cast or allow broadcasting to handle it
+    ω = Data.Array(- Pe .* ζ) 
 
     # =========================
     # Initialize state
@@ -129,12 +137,16 @@ function time_evolution()
     a_3 = zeros(DATAT, n)
     a_4 = zeros(DATAT, n)
     a_5 = zeros(DATAT, n)
+    c_1 = zeros(DATAT, n)
+    c_2 = zeros(DATAT, n)
+    c_3 = zeros(DATAT, n)
     
     # Note: h is currently a GPU array (Data.Array). 
     # We must pull h back to CPU to compute coefficients sequentially on CPU.
     h_cpu = Array(h)
 
     for i in 3:n-2
+
         h_1 = h_cpu[i-2]
         h_2 = h_cpu[i-1]
         h_3 = h_cpu[i]
@@ -149,6 +161,11 @@ function time_evolution()
         a_3[i] = (two * h_2 * (h_1 + h_2) - two * (h_1 + two * h_2) * (two * h_3 + h_4) + two * h_3 * (h_3 + h_4)) / ((h_1 + h_2) * h_2 * h_3 * (h_3 + h_4))
         a_4[i] = (two * (h_1 + two * h_2) * (h_3 + h_4) - two * h_2 * (h_1 + h_2)) / ((h_1 + h_2 + h_3) * (h_2 + h_3) * h_3 * h_4)
         a_5[i] = (two * (h_1 + h_2) * h_2 - two * (h_1 + two * h_2) * h_3) / (H_2 * (h_2 + h_3 + h_4) * (h_3 + h_4) * h_4)
+
+        c_1[i] = two * h_2 / (h_3 * h_2 * (h_3 + h_2))
+        c_2[i] = - two * (h_3 + h_2) / (h_3 * h_2 * (h_3 + h_2))
+        c_3[i] = two * h_3 / (h_3 * h_2 * (h_3 + h_2))
+    
     end
 
     # Boundary coefficients
@@ -163,6 +180,7 @@ function time_evolution()
     
     # Move coefficients to GPU
     a_1, a_2, a_3, a_4, a_5 = Data.Array(a_1), Data.Array(a_2), Data.Array(a_3), Data.Array(a_4), Data.Array(a_5)
+    c_1, c_2, c_3 = Data.Array(c_1), Data.Array(c_2), Data.Array(c_3)
     
     # h is already on GPU, but we update it from our DATAT conversion just in case
     h = Data.Array(h_cpu)
@@ -171,7 +189,8 @@ function time_evolution()
     # Time loop
     # =========================
     for t in 1:tsteps
-        @parallel (3:n-2) time_step!(θ_before, θ_now, h, ω, a_1, a_2, a_3, a_4, a_5, n, Δτ, Ω)
+        # @parallel (3:n-2) time_step_five_point!(θ_before, θ_now, h, ω, a_1, a_2, a_3, a_4, a_5, n, Δτ, Ω)
+        @parallel (3:n-2) time_step_three_point!(θ_before, θ_now, h, ω, c_1, c_2, c_3, n, Δτ, Ω)
         @parallel near_boundary_time_step!(θ_before, θ_now, h, ω, n, Δτ, Ω)
         @parallel base_boundary!(θ_now, γ, b_1, b_2, b_3)
         @parallel surface_boundary!(θ_now, h, β, n)
