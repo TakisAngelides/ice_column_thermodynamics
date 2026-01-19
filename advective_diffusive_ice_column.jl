@@ -14,10 +14,10 @@ const T_air = 223.15 # 223.15, 248.15
 # =========================
 # Numerical parameters
 # =========================
-const n = 100
+const n = 30
 const Δτ = 1e-5
 const tsteps = 100_000
-const spacing = "even"
+const spacing = "exponential"
 
 # =========================
 # Plotting
@@ -25,23 +25,22 @@ const spacing = "even"
 const plot_heatmap_flag = false
 const plot_lines_flag = true
 const n_lines = 10 # total number of line snapshots to plot
-const save_every = 1000 # save every n time steps
+const save_every = 10_000 # save every n time steps
 
 # =========================
 # Grid
 # =========================
 const ξ = LinRange(0, 1, n)
-const ω = - Pe .* ξ # the minus sign implies ice is advecting heat downward because positive ξ points upwards and the ice is moving downward (ω₀ < 0)
 
-function setup_grid(spacing; spacing_order=2.0, spacing_factor=2.0)
+function setup_grid(spacing; spacing_order = 2.0, spacing_factor = 2.0)
     spacing == "even" && return ξ
     spacing == "polynomial" && return ξ .^ spacing_order
-    spacing == "exponential" &&
-        return (exp.(spacing_factor .* ξ) .- 1) ./ (exp(spacing_factor) - 1)
+    spacing == "exponential" && return (exp.(spacing_factor .* ξ) .- 1) ./ (exp(spacing_factor) - 1)
     error("Unknown spacing")
 end
 
 const ζ = setup_grid(spacing)
+const ω = - Pe .* ζ # the minus sign implies ice is advecting heat downward because positive ξ points upwards and the ice is moving downward (ω₀ < 0)
 const h = diff(ζ)
 
 # =========================
@@ -76,7 +75,7 @@ function time_evolution_for_loop()
     @inbounds begin
 
         # =========================
-        # 5 point stencil coefficients from Eq 30 of https://www.researchgate.net/publication/229045683_Finite_Difference_Formulae_for_Unequal_Sub-Intervals_Using_Lagrange's_Interpolation_Formula
+        # 5 point stencil coefficients for diffusion from Eq 30 of https://www.researchgate.net/publication/229045683_Finite_Difference_Formulae_for_Unequal_Sub-Intervals_Using_Lagrange's_Interpolation_Formula
         # =========================
         a_1 = zeros(n)
         a_2 = zeros(n)
@@ -94,6 +93,20 @@ function time_evolution_for_loop()
             a_3[i] = (2.0 * h_2 * (h_1 + h_2) - 2.0 * (h_1 + 2.0 * h_2) * (2.0 * h_3 + h_4) + 2.0 * h_3 * (h_3 + h_4)) / ((h_1 + h_2) * h_2 * h_3 * (h_3 + h_4))
             a_4[i] = (2.0 * (h_1 + 2.0 * h_2) * (h_3 + h_4) - 2.0 * h_2 * (h_1 + h_2)) / ((h_1 + h_2 + h_3) * (h_2 + h_3) * h_3 * h_4)
             a_5[i] = (2.0 * (h_1 + h_2) * h_2 - 2.0 * (h_1 + 2.0 * h_2) * h_3) / (H_2 * (h_2 + h_3 + h_4) * (h_3 + h_4) * h_4)
+        end
+
+        # =========================
+        # 3 point stencil coefficients for diffusion
+        # =========================
+        c_1 = zeros(n)
+        c_2 = zeros(n)
+        c_3 = zeros(n)
+        for i in 3:n-2
+            h_1 = h[i-1]
+            h_2 = h[i]
+            c_1[i] = 2 * h_1 / (h_2 * h_1 * (h_2 + h_1))
+            c_2[i] = - 2 * (h_2 + h_1) / (h_2 * h_1 * (h_2 + h_1))
+            c_3[i] = 2 * h_2 / (h_2 * h_1 * (h_2 + h_1))
         end
 
         # =========================
@@ -115,7 +128,8 @@ function time_evolution_for_loop()
             # Integration in time for inner spatial loop avoiding 2 boundary points from each end
             # =======================
             for i in 3:n-2
-                diffusion = a_1[i]*θ_before[i-2] + a_2[i]*θ_before[i-1] + a_3[i]*θ_before[i] + a_4[i]*θ_before[i+1] + a_5[i]*θ_before[i+2]
+                # diffusion = a_1[i]*θ_before[i-2] + a_2[i]*θ_before[i-1] + a_3[i]*θ_before[i] + a_4[i]*θ_before[i+1] + a_5[i]*θ_before[i+2] # 5-point stencil
+                diffusion = c_1[i]*θ_before[i+1] + c_2[i]*θ_before[i] + c_3[i]*θ_before[i-1] # 3-point stencil
                 advection = ω[i] * (θ_before[i+1] - θ_before[i-1]) / (h[i] + h[i-1]) 
                 θ_now[i] = θ_before[i] + Δτ*(diffusion - advection + Ω)
             end
@@ -292,7 +306,7 @@ function plot_lines(time, θ; path_to_save = nothing, display_flag = true)
 end
 
 if plot_heatmap_flag || plot_lines_flag
-    time, θ = time_evolution_no_for_loop()
+    time, θ = time_evolution_for_loop()
     if plot_lines_flag
         plot_lines(time, θ)
     end
